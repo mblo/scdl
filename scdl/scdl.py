@@ -6,10 +6,10 @@
 Usage:
     scdl -l <track_url> [-a | -f | -C | -t | -p][-c][-o <offset>]\
 [--hidewarnings][--debug | --error][--path <path>][--addtofile][--onlymp3]
-[--hide-progress][--min-size <size>][--max-size <size>]
+[--hide-progress][--min-size <size>][--max-size <size>][--dry-run][--id3]
     scdl me (-s | -a | -f | -t | -p | -m)[-c][-o <offset>]\
 [--hidewarnings][--debug | --error][--path <path>][--addtofile][--onlymp3]
-[--hide-progress][--min-size <size>][--max-size <size>]
+[--hide-progress][--min-size <size>][--max-size <size>][--dry-run][--id3]
     scdl -h | --help
     scdl --version
 
@@ -23,11 +23,13 @@ Options:
     -a                    Download all tracks of a user (including reposts)
     -t                    Download all uploads of a user (no reposts)
     -f                    Download all favorites of a user
-    -C                    Download all commented by a user    
+    -C                    Download all commented by a user
     -p                    Download all playlists of a user
     -m                    Download all liked and owned playlists of a user
     -c                    Continue if a downloaded file already exists
     -o [offset]           Begin with a custom offset
+    --dry-run             Don't download anything
+    --id3                 Set id3tag accordingly
     --path [path]         Use a custom path for downloaded files
     --min-size [min-size] Skip tracks smaller than size (k/m/g)
     --max-size [max-size] Skip tracks larger than size (k/m/g)
@@ -51,6 +53,7 @@ import requests
 import re
 import tempfile
 import codecs
+import string
 
 import configparser
 import mutagen
@@ -373,11 +376,33 @@ def download_all_of_a_page(tracks):
         logger.info('\nTrack n°{0}'.format(counter))
         download_track(track)
 
+ALLOW_CHARS = string.ascii_letters + string.digits + "-_ "
+FORBID_START_END_CHARS = " "
+REPLACE = {"Ä": "Ae", "Ö":"Oe", "Ü": "Ue", "ß": "ss", "ä": "ae", "ö":"oe",
+    "ü": "ue", "Ø": "O", "é": "e"}
+
+def strToFilename(s):
+    out = ""
+    for c in s:
+        if c in ALLOW_CHARS:
+            out += c
+        elif c in REPLACE:
+            out += REPLACE[c]
+        else:
+            pass
+    out = out[:255]
+    out = " ".join(out.split()) # remove multiple white characters
+    while (len(out)>0 and out[-1] in FORBID_START_END_CHARS):
+        out = out[:-1]
+    while (len(out)>0 and out[0] in FORBID_START_END_CHARS):
+        out = out[1:]
+    return out
+
 def get_filename(track, title):
     username = track['user']['username']
     if username not in title and arguments['--addtofile']:
         title = '{0} - {1}'.format(username, title)
-    return title + '.mp3'
+    return strToFilename(title) + '.mp3'
 
 
 def download_track(track, playlist_name=None, playlist_file=None):
@@ -443,6 +468,7 @@ def download_track(track, playlist_name=None, playlist_file=None):
 
         min_size = arguments.get('--min-size')
         max_size = arguments.get('--max-size')
+        dry_run = arguments.get("--dry-run")
 
         if min_size is not None and total_length < min_size:
             logging.info('{0} not large enough, skipping'.format(title))
@@ -450,6 +476,10 @@ def download_track(track, playlist_name=None, playlist_file=None):
 
         if max_size is not None and total_length > max_size:
             logging.info('{0} too large, skipping'.format(title))
+            return
+
+        if dry_run is not None:
+            logging.info("{0} would be downloaded to {1}".format(title, os.path.join(os.getcwd(), filename)))
             return
 
         with temp as f:
