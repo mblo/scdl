@@ -5,10 +5,10 @@
 
 Usage:
     scdl -l <track_url> [-a | -f | -C | -t | -p][-c][-o <offset>]\
-[--hidewarnings][--debug | --error][--path <path>][--addtofile][--onlymp3]
+[--hidewarnings][--debug | --error][--path <path>][--addtofile][--addtimestamp][--onlymp3]
 [--hide-progress][--min-size <size>][--max-size <size>][--dry-run][--id3]
     scdl me (-s | -a | -f | -t | -p | -m)[-c][-o <offset>]\
-[--hidewarnings][--debug | --error][--path <path>][--addtofile][--onlymp3]
+[--hidewarnings][--debug | --error][--path <path>][--addtofile][--addtimestamp][--onlymp3]
 [--hide-progress][--min-size <size>][--max-size <size>][--dry-run][--id3]
     scdl -h | --help
     scdl --version
@@ -35,6 +35,7 @@ Options:
     --max-size [max-size] Skip tracks larger than size (k/m/g)
     --hidewarnings        Hide Warnings. (use with precaution)
     --addtofile           Add the artist name to the filename if it isn't in the filename already
+    --addtimestamp        Adds the timestamp of the creation of the track to the title (useful to sort chronologically)
     --onlymp3             Download only the mp3 file even if the track is Downloadable
     --error               Set log level to ERROR
     --debug               Set log level to DEBUG
@@ -63,6 +64,7 @@ from clint.textui import progress
 from scdl import __version__, CLIENT_ID, ALT_CLIENT_ID
 from scdl import client, utils
 
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logging.getLogger('requests').setLevel(logging.WARNING)
@@ -73,20 +75,20 @@ logger.addFilter(utils.ColorizeFilter())
 arguments = None
 token = ''
 path = ''
-offset = 0
+offset = 1
 
 url = {
     'playlists-liked': ('https://api-v2.soundcloud.com/users/{0}/playlists'
-                        '/liked_and_owned?limit=200&offset={1}'),
+                        '/liked_and_owned?limit=200'),
     'favorites': ('https://api.soundcloud.com/users/{0}/favorites?'
-                  'limit=200&offset={1}'),
+                  'limit=200'),
     'commented': ('https://api.soundcloud.com/users/{0}/comments'),
     'tracks': ('https://api.soundcloud.com/users/{0}/tracks?'
-               'limit=200&offset={1}'),
+               'limit=200'),
     'all': ('https://api-v2.soundcloud.com/profile/soundcloud:users:{0}?'
-            'limit=200&offset={1}'),
+            'limit=200'),
     'playlists': ('https://api.soundcloud.com/users/{0}/playlists?'
-                  'limit=200&offset={1}'),
+                  'limit=200'),
     'resolve': ('https://api.soundcloud.com/resolve?url={0}'),
     'trackinfo': ('https://api.soundcloud.com/tracks/{0}'),
     'user': ('https://api.soundcloud.com/users/{0}'),
@@ -120,9 +122,11 @@ def main():
 
     if arguments['-o'] is not None:
         try:
-            offset = int(arguments['-o']) - 1
+            offset = int(arguments['-o'])
+            if offset < 0:
+                raise
         except:
-            logger.error('Offset should be an integer...')
+            logger.error('Offset should be a positive integer...')
             sys.exit()
         logger.debug('offset: %d', offset)
 
@@ -298,17 +302,18 @@ def download(user, dl_type, name):
     logger.info(
         'Retrieving all {0} of user {1}...'.format(name, username)
     )
-    dl_url = url[dl_type].format(user_id, offset)
+    dl_url = url[dl_type].format(user_id)
     logger.debug(dl_url)
     ressources = client.get_collection(dl_url, token)
+    del ressources[:offset - 1]
     logger.debug(ressources)
     total = len(ressources)
     logger.info('Retrieved {0} {1}'.format(total, name))
-    for counter, item in enumerate(ressources, 1):
+    for counter, item in enumerate(ressources, offset):
         try:
             logger.debug(item)
             logger.info('{0} n°{1} of {2}'.format(
-                name.capitalize(), counter + offset, total)
+                name.capitalize(), counter, total)
             )
             if dl_type == 'all':
                 item_name = item['type'].split('-')[0]  # remove the '-repost'
@@ -346,7 +351,8 @@ def download_playlist(playlist):
     try:
         with codecs.open(playlist_name + '.m3u', 'w+', 'utf8') as playlist_file:
             playlist_file.write('#EXTM3U' + os.linesep)
-            for counter, track_raw in enumerate(playlist['tracks'], 1):
+            del playlist['tracks'][:offset - 1]
+            for counter, track_raw in enumerate(playlist['tracks'], offset):
                 logger.debug(track_raw)
                 logger.info('Track n°{0}'.format(counter))
                 download_track(track_raw, playlist['title'], playlist_file)
@@ -362,24 +368,17 @@ def download_my_stream():
     # TODO
     # Use Token
 
+def try_utime(path, filetime):
+    try:
+        os.utime(path, (time.time(), filetime))
+    except:
+        logger.warn("Cannot update utime of file")
 
-def download_all_of_a_page(tracks):
-    """
-    NOT RECOMMENDED
-    Download all song of a page
-    """
-    logger.error(
-        'NOTE: This will only download the songs of the page.(49 max)'
-    )
-    logger.error('I recommend you to provide a user link and a download type.')
-    for counter, track in enumerate(tracks, 1):
-        logger.info('\nTrack n°{0}'.format(counter))
-        download_track(track)
 
-ALLOW_CHARS = string.ascii_letters + string.digits + "-_ "
+ALLOW_CHARS = string.ascii_letters + string.digits + "-_ +"
 FORBID_START_END_CHARS = " "
 REPLACE = {"Ä": "Ae", "Ö":"Oe", "Ü": "Ue", "ß": "ss", "ä": "ae", "ö":"oe",
-    "ü": "ue", "Ø": "O", "é": "e"}
+    "ü": "ue", "Ø": "O", "é": "e", "/":"-", ":":"-"}
 
 def strToFilename(s):
     out = ""
@@ -402,6 +401,15 @@ def get_filename(track, title):
     username = track['user']['username']
     if username not in title and arguments['--addtofile']:
         title = '{0} - {1}'.format(username, title)
+
+    if arguments['--addtimestamp']:
+        # created_at sample: 2017/03/03 09:29:33 +0000
+        ts = datetime\
+            .strptime(track['created_at'], "%Y/%m/%d %H:%M:%S %z")\
+            .timestamp()
+
+        title = str(int(ts)) + "_" + title
+
     return strToFilename(title) + '.mp3'
 
 
@@ -441,6 +449,7 @@ def download_track(track, playlist_name=None, playlist_file=None):
 
     invalid_chars = '\/:*?|<>"'
     filename = ''.join(c for c in filename if c not in invalid_chars)
+    filename.encode('utf-8', 'ignore').decode('utf8')
     base, ext = os.path.splitext(filename)
     filename = base + ext.lower()
     logger.debug("filename : {0}".format(filename))
@@ -501,6 +510,12 @@ def download_track(track, playlist_name=None, playlist_file=None):
                 logger.debug(e)
         else:
             logger.error("This type of audio doesn't support tagging...")
+
+        #Try to change the real creation date
+        created_at = track['created_at']
+        filetime = int(time.mktime(datetime.strptime(created_at, '%Y/%m/%d %H:%M:%S %z').timetuple()))
+        try_utime(filename,filetime)
+
     else:
         if arguments['-c']:
             logger.info('{0} already Downloaded'.format(title))
@@ -527,10 +542,20 @@ def setMetadata(track, filename, album=None):
         shutil.copyfileobj(response.raw, out_file)
         out_file.seek(0)
 
+        track_date = datetime.strptime(track['created_at'], "%Y/%m/%d %H:%M:%S %z")
+        logger.debug('Extracting date: {0} {1}'.format(track['created_at'], track_date))
+        track_year = track_date.strftime("%Y")
+        track_day_month = track_date.strftime("%d%m")
+
         audio = mutagen.File(filename)
         audio['TIT2'] = mutagen.id3.TIT2(encoding=3, text=track['title'])
         audio['TPE1'] = mutagen.id3.TPE1(encoding=3, text=user['username'])
         audio['TCON'] = mutagen.id3.TCON(encoding=3, text=track['genre'])
+        audio['COMM'] = mutagen.id3.COMM(encoding=3, lang=u'ENG', text=track['description'])
+        audio['TYER'] = mutagen.id3.TYER(encoding=3, text=track_year)
+        audio['TDAT'] = mutagen.id3.TDAT(encoding=3, text=track_day_month)
+        audio['WOAS'] = mutagen.id3.WOAS(url=track['permalink_url'])
+
         if album:
             audio['TALB'] = mutagen.id3.TALB(encoding=3, text=album)
         if artwork_url:
@@ -540,7 +565,7 @@ def setMetadata(track, filename, album=None):
                 )
         else:
             logger.error('Artwork can not be set.')
-    audio.save()
+    audio.save(v2_version=3)
 
 
 def signal_handler(signal, frame):

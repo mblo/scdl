@@ -4,18 +4,20 @@
 
 import os
 
-__version__ = 'v1.6.7'
+__version__ = 'v1.6.9'
 CLIENT_ID = 'a3e059563d7fd3372b49b37f00a00bcf'
 ALT_CLIENT_ID = '2t9loNQH90kzJcsFCODdigxfp325aq4z'
 ALT2_CLIENT_ID = 'NONE'
 
 dir_path_to_conf = os.path.join(os.path.expanduser('~'), '.config/scdl')
-file_path_to_conf = os.path.join(
-    os.path.expanduser('~'), '.config/scdl/scdl.cfg'
-)
+if 'XDG_CONFIG_HOME' in os.environ:
+    dir_path_to_conf = os.environ['XDG_CONFIG_HOME']
+
+file_path_to_conf = os.path.join(dir_path_to_conf, 'scdl.cfg')
 text = """[scdl]
 auth_token =
-path = ."""
+path = .
+"""
 
 if not os.path.exists(dir_path_to_conf):
     os.makedirs(dir_path_to_conf)
