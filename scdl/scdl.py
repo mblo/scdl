@@ -487,7 +487,7 @@ def download_track(track, playlist_name=None, playlist_file=None):
             logging.info('{0} too large, skipping'.format(title))
             return
 
-        if dry_run is not None:
+        if dry_run is not False:
             logging.info("{0} would be downloaded to {1}".format(title, os.path.join(os.getcwd(), filename)))
             return
 
